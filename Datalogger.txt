@@ -1,0 +1,412 @@
+#include <ModbusMaster.h>
+#include <SPI.h>
+#include <SD.h>
+#include <Wire.h>
+#include "RTClib.h"
+/*!
+  We're using a MAX485-compatible RS485 Transceiver.
+  Rx/Tx is hooked up to the hardware serial port at 'Serial'.
+  The Data Enable and Receiver Enable pins are hooked up as follows:
+*/
+#define MAX485_DE      D3
+#define MAX485_RE_NEG  D3
+
+// instantiate ModbusMaster object
+ModbusMaster node_v, node_i, node_pf, node_kw, node_kva;
+
+File myFile;
+RTC_DS1307 rtc;
+
+void preTransmission()
+{
+  digitalWrite(MAX485_RE_NEG, 1);
+  digitalWrite(MAX485_DE, 1);
+}
+
+void postTransmission()
+{
+  digitalWrite(MAX485_RE_NEG, 0);
+  digitalWrite(MAX485_DE, 0);
+}
+
+void setup()
+{
+  pinMode(MAX485_RE_NEG, OUTPUT);
+  pinMode(MAX485_DE, OUTPUT);
+  // Init in receive mode
+
+
+  // Modbus communication runs at 9600 baud
+  Serial.begin(9600);
+
+  rtc.begin();
+
+  rtc.adjust(DateTime(2019, 6, 4, 12, 30, 0));
+  // Modbus slave ID 1
+  node_v.begin(1, Serial);
+  node_i.begin(1, Serial);
+  node_pf.begin(1, Serial);
+  node_kw.begin(1, Serial);
+  node_kva.begin(1, Serial);
+
+  // Callbacks allow us to configure the RS485 transceiver correctly
+  node_v.preTransmission(preTransmission);
+  node_v.postTransmission(postTransmission);
+
+  node_i.preTransmission(preTransmission);
+  node_i.postTransmission(postTransmission);
+
+  node_pf.preTransmission(preTransmission);
+  node_pf.postTransmission(postTransmission);
+
+  node_kw.preTransmission(preTransmission);
+  node_kw.postTransmission(postTransmission);
+
+  node_kva.preTransmission(preTransmission);
+  node_kva.postTransmission(postTransmission);
+
+  if (!SD.begin()) {
+    Serial.println("initialization failed!");
+    while (1);
+  }
+  myFile = SD.open("MYDATA.xls", FILE_WRITE);
+  if (myFile) {
+
+    myFile.print("DATE");
+    myFile.print('\t');
+    myFile.print("TIME");
+    myFile.print('\t');
+    myFile.print("V1 (Volt)");
+    myFile.print('\t');
+    myFile.print("V2 (Volt)");
+    myFile.print('\t');
+    myFile.print("V3 (Volt)");
+    myFile.print('\t');
+    myFile.print("VAvg (Volt)");
+    myFile.print('\t');
+    myFile.print("I1 (Ampere)");
+    myFile.print('\t');
+    myFile.print("I2 (Ampere)");
+    myFile.print('\t');
+    myFile.print("I3 (Ampere)");
+    myFile.print('\t');
+    myFile.print("IAvg (Ampere)");
+    myFile.print('\t');
+    myFile.print("Q1 PF");
+    myFile.print('\t');
+    myFile.print("Q2 PF");
+    myFile.print('\t');
+    myFile.print("Q3 PF");
+    myFile.print('\t');
+    myFile.print("QAvg PF");
+    myFile.print('\t');
+    myFile.print("KT1 (kW)");
+    myFile.print('\t');
+    myFile.print("KT2 (kW)");
+    myFile.print('\t');
+    myFile.print("KT3 (kW)");
+    myFile.print('\t');
+    myFile.print("KT (kW)");
+    myFile.print('\t');
+    myFile.print("KA1 (kVA)");
+    myFile.print('\t');
+    myFile.print("KA2 (kVA)");
+    myFile.print('\t');
+    myFile.print("KA3 (kVA)");
+    myFile.print('\t');
+    myFile.print("KA (kVA)");
+    myFile.print('\n');
+    myFile.close();
+  }
+  Serial.println("initialization done.");
+}
+
+bool state = true;
+
+void loop()
+{
+  uint8_t result_v, result_i, result_pf, result_kw, result_kva;
+
+  uint32_t num = 0;
+  float f = 0;
+
+  DateTime now = rtc.now();
+  myFile = SD.open("MYDATA.xls", FILE_WRITE);
+  if (myFile) {
+
+    Serial.print(now.day(), DEC);
+    Serial.print("/");
+    Serial.print(now.month(), DEC);
+    Serial.print("/");
+    Serial.println(now.year(), DEC);
+
+    myFile.print(now.day(), DEC);
+    myFile.print("/");
+    myFile.print(now.month(), DEC);
+    myFile.print("/");
+    myFile.print(now.year(), DEC);
+    myFile.print('\t');
+
+    myFile.print(now.hour(), DEC);
+    myFile.print(':');
+    myFile.print(now.minute(), DEC);
+    myFile.print(':');
+    myFile.print(now.second(), DEC);
+    myFile.print('\t');
+  }
+
+  delay(1000);
+  // Read 16 registers starting at 0x3100)
+  //***********************************************************V1____V2_____V3__vAVG*******************************
+  result_v = node_v.readHoldingRegisters(0x63, 8);
+  delay(20);
+
+  if (result_v == node_v.ku8MBSuccess)
+  {
+    delay(20);
+
+    num = node_v.getResponseBuffer(0x01);
+    num = num << 16;
+    num = num | node_v.getResponseBuffer(0x00);
+    f = *((float*)&num);
+    float v1 = f;
+
+    num = node_v.getResponseBuffer(0x03);
+    num = num << 16;
+    num = num | node_v.getResponseBuffer(0x02);
+    f = *((float*)&num);
+    float v2 = f;
+
+    num = node_v.getResponseBuffer(0x05);
+    num = num << 16;
+    num = num | node_v.getResponseBuffer(0x04);
+    f = *((float*)&num);
+    float v3 = f;
+
+    num = node_v.getResponseBuffer(0x07);
+    num = num << 16;
+    num = num | node_v.getResponseBuffer(0x06);
+    f = *((float*)&num);
+    float vAvg = f;
+    if (myFile)
+    {
+      Serial.print("V1=");
+      Serial.println(v1);
+      Serial.print("V2=");
+      Serial.println(v2);
+      Serial.print("V3=");
+      Serial.println(v3);
+      Serial.print("Vavg=");
+      Serial.println(vAvg);
+      myFile.print(v1);
+      myFile.print('\t');
+      myFile.print(v2);
+      myFile.print('\t');
+      myFile.print(v3);
+      myFile.print('\t');
+      myFile.print(vAvg);
+      myFile.print('\t');
+    }
+  }
+  //***********************************************************I1____I2_____I3_AVG*******************************
+  delay(1000);
+
+  result_i = node_i.readHoldingRegisters(0x79, 8);
+  if (result_i == node_i.ku8MBSuccess)
+  {
+    delay(20);
+    num = node_i.getResponseBuffer(0x01);
+    num = num << 16;
+    num = num | node_i.getResponseBuffer(0x00);
+    f = *((float*)&num);
+    float i1 = f;
+
+    num = node_i.getResponseBuffer(0x03);
+    num = num << 16;
+    num = num | node_i.getResponseBuffer(0x02);
+    f = *((float*)&num);
+    float i2 = f;
+
+    num = node_i.getResponseBuffer(0x05);
+    num = num << 16;
+    num = num | node_i.getResponseBuffer(0x04);
+    f = *((float*)&num);
+    float i3 = f;
+
+    num = node_i.getResponseBuffer(0x07);
+    num = num << 16;
+    num = num | node_i.getResponseBuffer(0x06);
+    f = *((float*)&num);
+    float iAvg = f;
+
+    if (myFile) {
+      Serial.print("I1=");
+      Serial.println(i1);
+      Serial.print("I2=");
+      Serial.println(i2);
+      Serial.print("I3=");
+      Serial.println(i3);
+      Serial.print("Iavg=");
+      Serial.println(iAvg);
+      myFile.print(i1);
+      myFile.print('\t');
+      myFile.print(i2);
+      myFile.print('\t');
+      myFile.print(i3);
+      myFile.print('\t');
+      myFile.print(iAvg);
+      myFile.print('\t');
+    }
+  }
+  //***********************************************************PF1____PF2_____PF3*******************************
+  delay(1000);
+
+  result_pf = node_pf.readHoldingRegisters(0x85, 8);
+  if (result_pf == node_pf.ku8MBSuccess)
+  {
+    delay(20);
+    num = node_pf.getResponseBuffer(0x01);
+    num = num << 16;
+    num = num | node_pf.getResponseBuffer(0x00);
+    f = *((float*)&num);
+    float pf1 = f;
+
+    num = node_pf.getResponseBuffer(0x03);
+    num = num << 16;
+    num = num | node_pf.getResponseBuffer(0x02);
+    f = *((float*)&num);
+    float pf2 = f;
+
+    num = node_pf.getResponseBuffer(0x05);
+    num = num << 16;
+    num = num | node_pf.getResponseBuffer(0x04);
+    f = *((float*)&num);
+    float pf3 = f;
+
+    num = node_pf.getResponseBuffer(0x07);
+    num = num << 16;
+    num = num | node_pf.getResponseBuffer(0x06);
+    f = *((float*)&num);
+    float pfAvg = f;
+    if (myFile) {
+      Serial.print("PF1=");
+      Serial.println(pf1);
+      Serial.print("PF2=");
+      Serial.println(pf2);
+      Serial.print("PF3=");
+      Serial.println(pf3);
+      Serial.print("PF AVG=");
+      Serial.println(pfAvg);
+      myFile.print(pf1);
+      myFile.print('\t');
+      myFile.print(pf2);
+      myFile.print('\t');
+      myFile.print(pf3);
+      myFile.print('\t');
+      myFile.print(pfAvg);
+      myFile.print('\t');
+    }
+  }
+  //***************************************** KW=phase acvtive power*****************
+  delay(1000);
+  result_kw = node_kw.readHoldingRegisters(0x8d, 8);
+  if (result_kw == node_kw.ku8MBSuccess)
+  {
+    delay(20);
+    num = node_kw.getResponseBuffer(0x01);
+    num = num << 16;
+    num = num | node_kw.getResponseBuffer(0x00);
+    f = *((float*)&num);
+    float kw1 = f;
+
+    num = node_kw.getResponseBuffer(0x03);
+    num = num << 16;
+    num = num | node_kw.getResponseBuffer(0x02);
+    f = *((float*)&num);
+    float kw2 = f;
+    
+    num = node_kw.getResponseBuffer(0x05);
+    num = num << 16;
+    num = num | node_kw.getResponseBuffer(0x04);
+    f = *((float*)&num);
+    float kw3 = f;
+
+    num = node_kw.getResponseBuffer(0x07);
+    num = num << 16;
+    num = num | node_kw.getResponseBuffer(0x06);
+    f = *((float*)&num);
+    float KW = f;
+    if (myFile) {
+      Serial.print("KW1=");
+      Serial.println(kw1);
+      Serial.print("KW2=");
+      Serial.println(kw2);
+      Serial.print("KW3=");
+      Serial.println(kw3);
+      Serial.print("KW=");
+      Serial.println(KW);
+      myFile.print(kw1);
+      myFile.print('\t');
+      myFile.print(kw2);
+      myFile.print('\t');
+      myFile.print(kw3);
+      myFile.print('\t');
+      myFile.print(KW);
+      myFile.print('\t');
+    }
+  }
+  //***************************************** KVA =phase Apparent power*****************
+  delay(1000);
+
+  result_kva = node_kva.readHoldingRegisters(0x9d, 8);
+  if (result_kva == node_kva.ku8MBSuccess)
+  {
+    delay(20);
+    num = node_kva.getResponseBuffer(0x01);
+    num = num << 16;
+    num = num | node_kva.getResponseBuffer(0x00);
+    f = *((float*)&num);
+    float kva1 = f;
+
+    num = node_kva.getResponseBuffer(0x03);
+    num = num << 16;
+    num = num | node_kva.getResponseBuffer(0x02);
+    f = *((float*)&num);
+    float kva2 = f;
+
+    num = node_kva.getResponseBuffer(0x05);
+    num = num << 16;
+    num = num | node_kva.getResponseBuffer(0x04);
+    f = *((float*)&num);
+    float kva3 = f;
+
+    num = node_kva.getResponseBuffer(0x07);
+    num = num << 16;
+    num = num | node_kva.getResponseBuffer(0x06);
+    f = *((float*)&num);
+    float kva = f;
+    if (myFile) {
+      myFile.print(kva1);
+      myFile.print('\t');
+      myFile.print(kva2);
+      myFile.print('\t');
+      myFile.print(kva3);
+      myFile.print('\t');
+      myFile.print(kva);
+      myFile.print('\n');
+      Serial.print("KVA1=");
+      Serial.println(kva1);
+      Serial.print("KVA2=");
+      Serial.println(kva2);
+      Serial.print("KVA3=");
+      Serial.println(kva3);
+      Serial.print("KVA=");
+      Serial.println(kva);
+      myFile.close();
+    }
+
+  }
+  delay(100);
+
+  delay(1000);
+}
